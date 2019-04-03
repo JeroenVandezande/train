@@ -26,6 +26,7 @@ type
     method Convert(ec: RemObjects.Script.EcmaScript.ExecutionContext; aVal: Object; aDestType: &Type; aDefault: Object): Object;
     method ConvertBack(aVal: Object): Object;
   end;
+
   WrapAsAttribute = public class(Attribute)
   private
     fLogName : String;
@@ -34,6 +35,7 @@ type
     property WantSelf: Boolean;
     property Important: Boolean := true;
     property SkipDryRun: Boolean;
+    property SecretArguments: array of Integer;
     property LogName: String read fLogName;
   end;
 
@@ -61,8 +63,19 @@ end;
 method Wrapper.Run(ec: RemObjects.Script.EcmaScript.ExecutionContext; aSelf: Object; aArgs: array of Object): Object;
 begin
   result := RemObjects.Script.EcmaScript.Undefined.Instance;
-  if not String.IsNullOrEmpty(fWrapInfo.LogName) then
-    fServices.Logger.Enter(fWrapInfo.Important, fWrapInfo.LogName, aArgs);
+  var lSecretArgs := aArgs;
+  if not String.IsNullOrEmpty(fWrapInfo.LogName) then begin
+    if length(fWrapInfo.SecretArguments) > 0 then begin
+      lSecretArgs := new Object[length(aArgs)];
+      for i: Integer := 0 to length(lSecretArgs)-1 do begin
+        if fWrapInfo.SecretArguments.Contains(i) then
+          lSecretArgs[i] := '**SECRET**'
+        else
+          lSecretArgs[i] := aArgs[i];
+      end;
+    end;
+    fServices.Logger.Enter(fWrapInfo.Important, fWrapInfo.LogName, lSecretArgs);
+  end;
   var lFail := true;
   try
     if (fServices.Engine.DryRun) and (fWrapInfo.SkipDryRun) then begin lFail := false; exit; end;
@@ -102,7 +115,7 @@ begin
     while lArgs.Count > 0 do begin
       if lArgs[0].RawDefaultValue = DBNull.Value then
         lList.Add(nil)
-      else 
+      else
         lList.Add(lArgs[0].RawDefaultValue);
       lArgs.RemoveAt(0);
     end;
@@ -126,8 +139,8 @@ begin
   if aVal = DBNull.Value then aVal := nil;
   if (aVal is String) and DoExpand then
     aVal := fServices.Expand(ec, String(aVal));
-  if aVal is WrapperObject then 
-    exit WrapperObject(aVal).Val else 
+  if aVal is WrapperObject then
+    exit WrapperObject(aVal).Val else
   if (aDestType.IsArray) and (aVal is RemObjects.Script.EcmaScript.EcmaScriptArrayObject) then begin
     var lArr := RemObjects.Script.EcmaScript.EcmaScriptArrayObject(aVal);
     Result := Array.CreateInstance(aDestType.GetElementType(), lArr.Length);
@@ -146,7 +159,7 @@ begin
         el.SetValue(result, Convert(ec, lEl, el.PropertyType, nil), []);
       end;
     end;
-  end else if aVal = RemObjects.Script.EcmaScript.Undefined.Instance then exit nil 
+  end else if aVal = RemObjects.Script.EcmaScript.Undefined.Instance then exit nil
   else if (aDestType = typeOf(String)) and (aVal is RemObjects.Script.EcmaScript.EcmaScriptObject) then begin
     exit aVal.ToString
   end else

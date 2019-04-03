@@ -51,13 +51,17 @@ type
     method LogHint(s: String);
     method LogDebug(s: String);
     method LogInfo(s: String);
+    method LogLive(s: String);
     method Enter(aImportant: Boolean := false; aScript: String; params args: array of Object);
     method &Exit(aImportant: Boolean := false; aScript: String; aFailMode: FailMode; aResult: Object := nil);
     method &Write;
-  end;  
+    property InIgnore: Boolean read write;
+  end;
 
   MultiLogger = public class(ILogger, IDisposable)
   private
+    method set_InIgnore(value: Boolean); locked;
+    method get_InIgnore: Boolean; locked;
   public
     constructor;
     property Loggers: List<ILogger> := new List<ILogger>; readonly;
@@ -69,25 +73,31 @@ type
     method LogHint(s: String);locked;
     method LogDebug(s: String);locked;
     method LogInfo(s: String); locked;
+    method LogLive(s: String); locked;
     method Enter(aImportant: Boolean := false; aScript: String; params args: array of Object);locked;
     method &Exit(aImportant: Boolean := false; aScript: String; aFailMode: FailMode; aResult: Object);locked;
+    property InIgnore: Boolean read get_InIgnore    write set_InIgnore;
   end;
 
   BaseXmlLogger = public abstract class(ILogger, IDisposable)
+  private
+    fTimeStack := new List<DateTime>;
   assembly
     method FindFailNodes(var aWork: XElement; aInput: sequence of XElement);
     fXmlData: System.Xml.Linq.XElement;
     class method Filter(s: String): String;
   public
     constructor;
-    method Dispose; virtual; 
-    method Write; virtual;
+    method Dispose; virtual;
+    method &Write; virtual;
     method LogError(s: String); locked;
+    property InIgnore: Boolean;
     method LogMessage(s: String);locked;
     method LogWarning(s: String);locked;
     method LogHint(s: String);locked;
     method LogDebug(s: String);locked;
     method LogInfo(s: String); locked;
+    method LogLive(s: String); empty;
     method Enter(aImportant: Boolean := false; aScript: String; params args: array of Object);locked;
     method &Exit(aImportant: Boolean := false; aScript: String; aFailMode: FailMode; aResult: Object);locked;
     class method MyToString(s: Object): String;
@@ -137,14 +147,14 @@ end;
 method XmlLogger.Dispose;
 begin
   inherited;
-  
+
 end;
 
 method XmlLogger.&Write;
 begin
   inherited;
 
-  if not String.IsNullOrEmpty(fTargetXML) then 
+  if not String.IsNullOrEmpty(fTargetXML) then
     fXmlData.Document.Save(fTargetXML);
   if not String.IsNullOrEmpty(fTargetHTML) then begin
 
@@ -166,10 +176,10 @@ begin
 
     using lReader := fXmlData.CreateReader() do begin
       using lXPathDoc := new XPathDocument(lReader) do begin
-        {$HIDE W37}
-        // XslTransform may be deprecated, but it works. XslCompiledTransform as used above generates bad HTML!
+        {$HIDE W28}
+        // XslTransform may be deprecated, but it works. XslCompiledTransform as used above generates bad HTML.DO NOT UPDATE
         using lTransform := new XslTransform() do begin
-          
+
           if not String.IsNullOrEmpty(fXSLT) then begin
             using lXslt := new XmlTextReader(fXSLT) do
               lTransform.Load(lXslt);
@@ -183,7 +193,7 @@ begin
             lTransform.Transform(lXPathDoc, nil, lWriter);
 
         end;
-        {$SHOW W37}
+        {$SHOW W28}
       end;
     end;
 
@@ -192,7 +202,7 @@ end;
 
 method BaseXmlLogger.LogError(s: String);
 begin
-  fXmlData.Add(new XElement('error', Filter(s)));
+  fXmlData.Add(new XElement(if InIgnore then 'ignoredError' else 'error', Filter(s)));
 end;
 
 method BaseXmlLogger.LogMessage(s: String);
@@ -226,6 +236,7 @@ begin
   var lNode := new XElement('action', new XAttribute('name', Filter(aScript)), new XAttribute('args', Filter(lArgsString)));
   self.fXmlData.Add(lNode);
   fXmlData := lNode;
+  fTimeStack.Add(DateTime.UtcNow);
 end;
 
 method BaseXmlLogger.&Exit(aImportant: Boolean := false; aScript: String; aFailMode: FailMode; aResult: Object);
@@ -239,6 +250,29 @@ begin
   end));
   if (aResult <> nil) and (aResult <> Undefined.Instance) then
     fXmlData.Add(new XElement('return', Filter(MyToString(aResult))));
+  if fTimeStack.Count > 0 then begin
+    var lTimeStarted := fTimeStack[fTimeStack.Count-1];
+    fTimeStack.RemoveAt(fTimeStack.Count-1);
+
+    var lPrettyTimeString := "";
+    var lSeconds := DateTime.UtcNow.Subtract(lTimeStarted).TotalSeconds;
+    if lSeconds > 3600 then begin
+      lPrettyTimeString := lPrettyTimeString+$"{Integer(lSeconds/3600)}h ";
+      lSeconds := lSeconds mod 3600;
+    end;
+    if lSeconds > 60 then begin
+      lPrettyTimeString := lPrettyTimeString+$"{Integer(lSeconds/60)}m ";
+      lSeconds := lSeconds mod 60;
+      if lSeconds > 0 then
+        lPrettyTimeString := lPrettyTimeString+$"{Integer(lSeconds)}s ";
+    end
+    else begin
+      lPrettyTimeString := $"{Integer(lSeconds)}s";
+    end;
+
+    fXmlData.Add(new XAttribute('took', lPrettyTimeString.Trim()));
+  end;
+
   fXmlData := fXmlData.Parent;
 end;
 
@@ -254,7 +288,7 @@ begin
           el.Document.Root.AddFirst(aWork);
         end;
         var lNewEL := new XElement(el.Name, el.Attributes().Where(a->not a.IsNamespaceDeclaration));
-        
+
         for each error in el.Elements('error') do begin
           lNewEL.Add(new XElement('error', error.Value));
         end;
@@ -297,9 +331,9 @@ end;
 class method BaseXmlLogger.MyToString(s: Object): String;
 begin
   if s = nil then exit '';
-  if s is array of Object then 
+  if s is array of Object then
     exit String.Join(', ', array of Object(s).Select(a->MyToString(a)).ToArray);
-  if s is EcmaScriptObject then  
+  if s is EcmaScriptObject then
     exit coalesce(EcmaScriptObject(s).Root.JSONStringify(EcmaScriptObject(s).Root.ExecutionContext, nil, s):ToString, '');
   exit s.ToString;
 end;
@@ -307,7 +341,7 @@ end;
 method BaseXmlLogger.&Write;
 begin
   var lFailElement: XElement := nil;
-  FindFailNodes(var lFailElement, fXmlData.Document.Root.Elements);
+  FindFailNodes(var lFailElement, fXmlData:Document:Root:Elements);
 end;
 
 constructor MultiLogger;
@@ -340,6 +374,11 @@ begin
   Loggers.ForEach(a->a.LogDebug(s));
 end;
 
+method MultiLogger.LogLive(s: String);
+begin
+  Loggers.ForEach(a -> a.LogLive(s) );
+end;
+
 method MultiLogger.Enter(aImportant: Boolean := false; aScript: String; params args: array of Object);
 begin
   Loggers.ForEach(a->a.Enter(aImportant, aScript, args));
@@ -363,6 +402,18 @@ end;
 method MultiLogger.&Write;
 begin
   Loggers.ForEach(a->a.Write);
+end;
+
+method MultiLogger.get_InIgnore: Boolean;
+begin
+  if Loggers.Count = 0 then exit false;
+  exit Loggers[0].InIgnore;
+end;
+
+method MultiLogger.set_InIgnore(value: Boolean);
+begin
+  for each el in Loggers do
+    el.InIgnore := value;
 end;
 
 method LoggingRegistration.&Register(aServices: IApiRegistrationServices);

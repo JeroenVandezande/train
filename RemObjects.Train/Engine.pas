@@ -2,10 +2,10 @@
 
 interface
 
-uses 
+uses
   System.Linq,
-  RemObjects.Script, 
-  System.Collections.Generic, 
+  RemObjects.Script,
+  System.Collections.Generic,
   RemObjects.Script.EcmaScript,
   RemObjects.Train.API,
   System.IO;
@@ -22,7 +22,7 @@ type
     method fEngineDebugFrameExit(sender: Object; e: ScriptDebugExitScopeEventArgs);
     method fEngineDebugFrameEnter(sender: Object; e: ScriptDebugEventArgs);
     method fEngineDebugException(sender: Object; e: ScriptDebugEventArgs);
-    method RegisterValue(aName: String; aValue: Object); 
+    method RegisterValue(aName: String; aValue: Object);
     method RegisterProperty(aName: String; aGet: Func<Object>; aSet: Action<Object>);
     method RegisterObjectValue(aName: String): EcmaScriptObject;
 
@@ -46,6 +46,7 @@ type
     property AsyncWorker: AsyncWorker;
     property Environment: Environment read fEnvironment;
     property DryRun: Boolean;
+    property LiveOutput: Boolean;
     property LogFunctionEnter: Boolean := true;
 
     method Initialize;
@@ -102,7 +103,7 @@ begin
     end;
     if fTasks.Count > 0 then begin
       Logger.LogMessage('Waiting for unfinished tasks');
-      if not System.Threading.Tasks.Task.WaitAll(fTasks.Select(a->a.Item1).ToArray,  TimeSpan.FromSeconds(60)) then 
+      if not System.Threading.Tasks.Task.WaitAll(fTasks.Select(a->a.Item1).ToArray, TimeSpan.FromSeconds(60)) then
         Logger.LogMessage('Unfinished tasks timed out');
     end;
   except
@@ -116,7 +117,7 @@ begin
       raise new AbortException;
     end;
   finally
-    for each el in fTasks.ToArray do 
+    for each el in fTasks.ToArray do
       UnregisterTask(el.Item1);
     Logger.Exit(true, 'script', if lFail then FailMode.Yes else FailMode.No);
   end;
@@ -125,8 +126,8 @@ end;
 method Engine.fEngineDebugTracePoint(sender: Object; e: ScriptDebugEventArgs);
 begin
   fErrorPos := e.SourceSpan;
-  if assigned(e.SourceSpan:File) then
-    Logger:LogDebug('Running line {0} ({1}:{2})',e.SourceSpan.File, e.SourceSpan.StartRow, e.SourceSpan.StartCol);
+  //if assigned(e.SourceSpan:File) then
+  //  Logger:LogDebug('Running line {0} ({1}:{2})',e.SourceSpan.File, e.SourceSpan.StartRow, e.SourceSpan.StartCol);
 end;
 
 method Engine.fEngineDebugException(sender: Object; e: ScriptDebugEventArgs);
@@ -141,7 +142,7 @@ begin
   if e.Name.StartsWith('_') then exit;
   var lEnv := fEngine.CallStack.LastOrDefault():Frame;
   var n := if (lEnv = nil) or (not lEnv.HasBinding('arguments')) then nil else lEnv.GetBindingValue('arguments', false);
-  var ev :=  EcmaScriptObject(n);
+  var ev := EcmaScriptObject(n);
   var lArgs: List<Object> := new List<Object>;
   if ev <> nil then begin
     for i: Integer := 0 to RemObjects.Script.ecmascript.Utilities.GetObjAsInteger(ev.Get('length'), fEngine.GlobalObject.ExecutionContext) -1 do begin
@@ -229,7 +230,7 @@ begin
   if String.IsNullOrEmpty(value) then value := System.Environment.CurrentDirectory;
   value := Path.GetFullPath(value); // resolve it
   if value <> fWorkDir then begin
-    if not Directory.Exists(value) then 
+    if not Directory.Exists(value) then
       raise new Exception('Directory not valid: '+value);
     fWorkDir := value;
     Logger:LogMessage('Changing directory to '+value);
@@ -240,7 +241,7 @@ method Engine.ResolveWithBase(ec: ExecutionContext; s: String; aExpand: Boolean 
 begin
   if s = nil then exit nil;
   if aExpand then
-    s := Expand(ec,s  );
+    s := Expand(ec,s);
   if s.StartsWith('~/') or s.StartsWith('~\') then
     s := Path.Combine(system.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile), s.Substring(2));
   if System.IO.Path .DirectorySeparatorChar = '\' then
@@ -261,11 +262,11 @@ begin
   for each el in fTasks do begin
     if (el.Item1 = aTask) then begin
       if el.Item1.IsCompleted then
-        Logger.Enter(false, 'Finished Task: '+el.Item2) 
+        Logger.Enter('Finished Task: '+el.Item2)
       else
-        Logger.Enter(false, 'Unfinished Task: '+el.Item2);
+        Logger.Enter('Unfinished Task: '+el.Item2);
       el.Item3.Replay(Logger);
-      Logger.Exit('Finished Task: '+el.Item2, if  el.Item1.IsFaulted then FailMode.Yes else FailMode.No);
+      Logger.Exit('Finished Task: '+el.Item2, if el.Item1.IsFaulted then FailMode.Yes else FailMode.No);
 
       el.Item1.Dispose;
 
@@ -284,14 +285,16 @@ end;
 
 method Engine.Expand(ec: ExecutionContext; s: String): String;
 begin
-  if fRegEx = nil then 
+  if length(s) = 0 then exit s;
+
+  if fRegEx = nil then
     fRegEx := new System.Text.RegularExpressions.Regex('\$\$|\$(?<value>\([a-zA-Z_\-0-9\. ]+\))|\$(?<value>[a-zA-Z_\-0-9]+)', System.Text.RegularExpressions.RegexOptions.Compiled);
   exit fRegEx.Replace(s, method (match: System.Text.RegularExpressions.Match) begin
    var lValue := match.Groups['value']:Value;
    if lValue = '' then exit '$';
-   if lValue.StartsWith('(') and lValue.EndsWith(')') then 
+   if lValue.StartsWith('(') and lValue.EndsWith(')') then
      lValue := lValue.Substring(1, lValue.Length -2);
-    
+
     var lScope := ec:LexicalScope;
     var lRes: String := nil;
     while assigned(lScope) do begin
@@ -306,11 +309,11 @@ begin
     end;
     if (lRes = nil) then lRes := Environment[lValue]:ToString;
     if lRes = nil then lRes := '$'+match.Groups['value']:Value;
-    
+
     exit lRes;
   end);
 end;
-    
+
 
 
 end.

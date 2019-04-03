@@ -2,11 +2,11 @@
 
 interface
 
-uses 
+uses
   RemObjects.Train,
   System.Threading,
-  RemObjects.Script.EcmaScript, 
-  RemObjects.Script.EcmaScript.Internal, 
+  RemObjects.Script.EcmaScript,
+  RemObjects.Script.EcmaScript.Internal,
   System.Text,
   System.Text.RegularExpressions,
   System.Xml.Linq,
@@ -18,13 +18,13 @@ type
   [PluginRegistration]
   MSBuildPlugin = public class(IPluginRegistration)
   private
-    class var fVersionRegex,
-    fFileVersionRegex: Regex;
+    class var fVersionRegex, fFileVersionRegex: Regex;
+    class var fServices: IApiRegistrationServices;
   public
     method &Register(aServices: IApiRegistrationServices);
 
     class method DetectMSBuild(aServices: IApiRegistrationServices;ec: ExecutionContext; aOptions: MSBuildOptions): String;
-    class method getDefaultMSBuild(aServices: IApiRegistrationServices; ec: ExecutionContext; aVersion: String; aRaiseException: Boolean): String;
+    class method getDefaultMSBuild(aServices: IApiRegistrationServices; ec: ExecutionContext; aVersion: String; aRaiseException: Boolean := true): String;
 
     [WrapAs('msbuild.custom', SkipDryRun := false)]
     class method MSBuildCustom(aServices: IApiRegistrationServices; ec: ExecutionContext; aProject: String; aOptions: MSBuildOptions);
@@ -37,6 +37,7 @@ type
     [WrapAs('msbuild.updateAssemblyVersion', SkipDryRun := true)]
     class method MSBuildUpdateAssemblyVersion(aServices: IApiRegistrationServices; ec: ExecutionContext; aFile: String; aNewVersion: String; aFileVersion: String := '');
   end;
+
   [PluginRegistration]
   GacPlugin = public class(IPluginRegistration)
   public
@@ -101,6 +102,7 @@ end;
 
 method MSBuildPlugin.&Register(aServices: IApiRegistrationServices);
 begin
+  fServices := aServices;
   aServices.RegisterObjectValue('msbuild')
     .AddValue('custom', RemObjects.Train.MUtilities.SimpleFunction(aServices.Engine, typeOf(MSBuildPlugin), 'MSBuildCustom'))
     .AddValue('clean', RemObjects.Train.MUtilities.SimpleFunction(aServices.Engine, typeOf(MSBuildPlugin), 'MSBuildClean'))
@@ -108,7 +110,6 @@ begin
     .AddValue('rebuild', RemObjects.Train.MUtilities.SimpleFunction(aServices.Engine, typeOf(MSBuildPlugin), 'MSBuildRebuild'))
     .AddValue('updateAssemblyVersion', RemObjects.Train.MUtilities.SimpleFunction(aServices.Engine, typeOf(MSBuildPlugin), 'MSBuildUpdateAssemblyVersion'))
 ;
-
 end;
 
 class method MSBuildPlugin.MSBuildClean(aServices: IApiRegistrationServices; ec: ExecutionContext; aProject: String; aOptions: MSBuildOptions);
@@ -139,12 +140,16 @@ begin
     if not String.IsNullOrEmpty(a) then begin
       lTmp.LogError(a);
       locking lOutput do lOutput.AppendLine(a);
+      if fServices.Engine.LiveOutput then
+        fServices.Engine.Logger.LogLive("(stderr) "+a);
     end;
    end ,a-> begin
     if not String.IsNullOrEmpty(a) then begin
       if a.Contains(': error ') then
         lTmp.LogError(a);
       locking lOutput do lOutput.AppendLine(a);
+      if fServices.Engine.LiveOutput then
+        fServices.Engine.Logger.LogLive(a);
     end;
    end, nil, nil);
 
@@ -184,12 +189,16 @@ begin
     if not String.IsNullOrEmpty(a) then begin
       lTmp.LogError(a);
       locking lOutput do lOutput.AppendLine(a);
+      if fServices.Engine.LiveOutput then
+        fServices.Engine.Logger.LogLive("(stderr) "+a);
     end;
    end ,a-> begin
     if not String.IsNullOrEmpty(a) then begin
       if a.Contains(': error ') then
         lTmp.LogError(a);
       locking lOutput do lOutput.AppendLine(a);
+      if fServices.Engine.LiveOutput then
+        fServices.Engine.Logger.LogLive(a);
     end;
    end, nil, nil);
 
@@ -231,12 +240,16 @@ begin
     if not String.IsNullOrEmpty(a) then begin
       lTmp.LogError(a);
       locking lOutput do lOutput.AppendLine(a);
+      if fServices.Engine.LiveOutput then
+        fServices.Engine.Logger.LogLive("(stderr) "+a);
     end;
    end ,a-> begin
     if not String.IsNullOrEmpty(a) then begin
       if a.Contains(': error ') then
         lTmp.LogError(a);
       locking lOutput do lOutput.AppendLine(a);
+      if fServices.Engine.LiveOutput then
+        fServices.Engine.Logger.LogLive(a);
     end;
    end, nil, nil);
 
@@ -250,7 +263,7 @@ begin
   if n <> 0 then raise new Exception('MSBuild failed');
 end;
 
-class method MSBuildPlugin.MSBuildUpdateAssemblyVersion(aServices: IApiRegistrationServices; ec: ExecutionContext; 
+class method MSBuildPlugin.MSBuildUpdateAssemblyVersion(aServices: IApiRegistrationServices; ec: ExecutionContext;
   aFile: String; aNewVersion: String; aFileVersion: String);
 begin
   for each el in aFile.Split([';', ','], StringSplitOptions.RemoveEmptyEntries).Select(a->aServices.ResolveWithBase(ec, a)) do begin
@@ -258,9 +271,10 @@ begin
     var lOrg := lFile;
     var lFoundAsmVer := false;
     var lFoundAsmFileVer := false;
+
     if fVersionRegex = nil then begin
-      fVersionRegex := new Regex('(?<=[. ]AssemblyVersion\(["''])(?<version>.*?)(?=["'']\))', RegexOptions.IgnoreCase);
-      fFileVersionRegex := new Regex('(?<=[. ]AssemblyFileVersion\(["''])(?<version>.*?)(?=["'']\))', RegexOptions.IgnoreCase);
+      fVersionRegex := new Regex('(?<=\:\s*AssemblyVersion\(["''])(?<version>.*?)(?=["'']\))', RegexOptions.IgnoreCase);
+      fFileVersionRegex := new Regex('(?<=\:\s*AssemblyFileVersion\(["''])(?<version>.*?)(?=["'']\))', RegexOptions.IgnoreCase);
     end;
     lFile := fVersionRegex.Replace(lFile, method (aMatch: Match): String begin
         lFoundAsmVer := true;
@@ -271,18 +285,23 @@ begin
         if String.IsNullOrEmpty(aFileVersion) then exit aNewVersion;
         exit aFileVersion;
       end);
+
     if not lFoundAsmVer then begin
-      lFile := lFile+ 
-      #13#10'[assembly: AssemblyVersion("'+aNewVersion+'")]'#13#10;
-
+      if Path.GetExtension(el).ToLower = '.swift' then
+        lFile := lFile+#13#10'[assembly: AssemblyVersion("'+aNewVersion+'")]'#13#10
+      else
+        lFile := lFile+#13#10'@assembly:AssemblyVersion("'+aNewVersion+'")'#13#10;
     end;
+
     if not lFoundAsmFileVer and not String.IsNullOrEmpty(aFileVersion) then begin
-      lFile := lFile+ 
-      #13#10'[assembly: AssemblyVersion("'+aFileVersion+'")]'#13#10;
-
+      if Path.GetExtension(el).ToLower = '.swift' then
+        lFile := lFile+#13#10'@assembly:AssemblyVersion("'+aFileVersion+'")'#13#10
+      else
+        lFile := lFile+#13#10'[assembly: AssemblyVersion("'+aFileVersion+'")]'#13#10;
     end;
-    if lOrg <> lFile then 
-    File.WriteAllText(el, lFile, Encoding.UTF8);
+
+    if lOrg <> lFile then
+      File.WriteAllText(el, lFile, Encoding.UTF8);
   end;
 end;
 
@@ -313,12 +332,17 @@ begin
     if not String.IsNullOrEmpty(a) then begin
       lTmp.LogError(a);
       locking lOutput do lOutput.AppendLine(a);
+      if fServices.Engine.LiveOutput then
+        fServices.Engine.Logger.LogLive("(stderr) "+a);
     end;
    end ,a-> begin
     if not String.IsNullOrEmpty(a) then begin
       if a.StartsWith('MSBUILD : error') then
         lTmp.LogError(a);
       locking lOutput do lOutput.AppendLine(a);
+      writeLn(fServices.Engine.Logger);
+      if fServices.Engine.LiveOutput then
+        fServices.Engine.Logger.LogLive(a);
     end;
    end, nil, nil);
 
@@ -339,35 +363,35 @@ const
   msbuild35 = '$(windir)/Microsoft.NET/Framework/v3.5/MSBuild.exe';
   msbuild40 = '$(windir)/Microsoft.NET/Framework/v4.0.30319/MSBuild.exe';
 
-begin  
+begin
   result := '';
   var lbuild: String;
 
-  case aVersion of 
+  case aVersion of
     '2','2.0': begin
       lbuild := coalesce(aServices.Environment['MSBuild20']:ToString, '');
-      if File.Exists(lbuild) then exit lbuild; 
+      if File.Exists(lbuild) then exit lbuild;
       lbuild := aServices.Expand(ec, msbuild20);
-      if File.Exists(lbuild) then exit lbuild; 
+      if File.Exists(lbuild) then exit lbuild;
       exit getDefaultMSBuild(aServices, ec,  '3.5', aRaiseException);
     end;
     '3.5': begin
       lbuild := coalesce(aServices.Environment['MSBuild35']:ToString, '');
-      if File.Exists(lbuild) then exit lbuild; 
+      if File.Exists(lbuild) then exit lbuild;
       lbuild := aServices.Expand(ec, msbuild35);
-      if File.Exists(lbuild) then exit lbuild; 
+      if File.Exists(lbuild) then exit lbuild;
       exit getDefaultMSBuild(aServices, ec,  '4.0', aRaiseException);
     end;
     '4','4.0': begin
       lbuild := coalesce(aServices.Environment['MSBuild40']:ToString, '');
-      if File.Exists(lbuild) then exit lbuild; 
+      if File.Exists(lbuild) then exit lbuild;
       lbuild := aServices.Expand(ec, msbuild40);
-      if File.Exists(lbuild) then exit lbuild; 
-    end; 
+      if File.Exists(lbuild) then exit lbuild;
+    end;
   else
     lbuild := coalesce(aServices.Environment['MSBuild']:ToString, '');
-    if File.Exists(lbuild) then exit lbuild; 
-    
+    if File.Exists(lbuild) then exit lbuild;
+
     lbuild :=  getDefaultMSBuild(aServices, ec,  '4.0', false);
     if not String.IsNullOrEmpty(lbuild) then exit lbuild;
     lbuild :=  getDefaultMSBuild(aServices, ec,  '3.5', false);
@@ -376,11 +400,18 @@ begin
     if not String.IsNullOrEmpty(lbuild) then exit lbuild;
   end;
 
-  if aRaiseException then 
+  lbuild := "/usr/bin/xbuild";
+  if File.Exists(lbuild) then exit lbuild;
+  lbuild := "/usr/local/bin/xbuild";
+  if File.Exists(lbuild) then exit lbuild;
+  lbuild := "/Library/Frameworks/Mono.framework/Versions/Current/bin/xbuild";
+  if File.Exists(lbuild) then exit lbuild;
+
+  if aRaiseException then
     raise new Exception('MSBuild is not found!');
 end;
 
-class method MSBuildPlugin.DetectMSBuild(aServices: IApiRegistrationServices;ec: ExecutionContext;aOptions: MSBuildOptions): String;  
+class method MSBuildPlugin.DetectMSBuild(aServices: IApiRegistrationServices;ec: ExecutionContext;aOptions: MSBuildOptions): String;
 begin
   exit getDefaultMSBuild(aServices, ec, aOptions:toolsVersion, true);
 end;

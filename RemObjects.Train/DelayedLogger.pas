@@ -9,6 +9,8 @@ uses
 type
   DelayedLogger = public class(ILogger)
   private
+    method set_InIgnore(value: Boolean);
+    fInIgnore: Boolean;
     fDelayStore: LinkedList<Tuple<Integer, String, Integer, array of Object>> := new LinkedList<Tuple<Integer, String, Integer,array  of Object>>;
   protected
   public
@@ -18,7 +20,9 @@ type
     method LogHint(s: String);
     method LogDebug(s: String);
     method LogInfo(s: String);
+    method LogLive(s: String); empty;
     method &Write; empty;
+    property InIgnore: Boolean read fInIgnore write  set_InIgnore;
 
     method Enter(aImportant: Boolean := false; aScript: String; params args: array of Object);
     method &Exit(aImportant: Boolean := false; aScript: String; aFailMode: FailMode; aReturn: Object);
@@ -60,14 +64,14 @@ end;
 
 method DelayedLogger.Enter(aImportant: Boolean := false; aScript: String; params args: array of Object);
 begin
-  if LoggerSettings.ShowDebug or aImportant then 
+  if LoggerSettings.ShowDebug or aImportant then
   locking fDelayStore do
   fDelayStore.AddLast(Tuple.Create(5, aScript, 0,args ));
 end;
 
 method DelayedLogger.&Exit(aImportant: Boolean := false; aScript: String; aFailMode: FailMode; aReturn: Object);
 begin
-  if LoggerSettings.ShowDebug or aImportant then 
+  if LoggerSettings.ShowDebug or aImportant then
   locking fDelayStore do
   fDelayStore.AddLast(Tuple.Create(6, aScript, Integer(aFailMode),array of Object([aReturn])));
 end;
@@ -85,6 +89,7 @@ begin
       6: aTarget.Enter(true,lItem.Value.Item2, lItem.Value.Item4);
       7: aTarget.Exit(true,lItem.Value.Item2, FailMode(lItem.Value.Item3), lItem.Value.Item4[0]);
       8: aTarget.LogInfo(lItem.Value.Item2);
+      9: aTarget.InIgnore := Boolean(lItem.Value.Item3);
     end;
     lItem := lItem.Next;
   end;
@@ -93,6 +98,14 @@ end;
 method DelayedLogger.LogInfo(s: String);
 begin
   fDelayStore.AddLast(Tuple.Create(8, s, 0,array of Object(nil)));
+end;
+
+method DelayedLogger.set_InIgnore(value: Boolean);
+begin
+  if value = fInIgnore then exit;
+  fInIgnore := value;
+
+  fDelayStore.AddLast(Tuple.Create(9, '', if value then 1 else 0,array of Object(nil)));
 end;
 
 end.

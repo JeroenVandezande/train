@@ -15,12 +15,12 @@ type
   protected
   public
     method &Register(aServices: IApiRegistrationServices);
-    [WrapAs('ssh.execute', SkipDryRun := true)]
+    [WrapAs('ssh.execute', SkipDryRun := true, SecretArguments := [2, 3])]
     class method SshExecute(aServices: IApiRegistrationServices; aConnectionString, aCMD, aUSername, aPassword: String): String;
     [WrapAs('ssh.loadKey', SkipDryRun := true)]
     class method SshLoadKey(aServices: IApiRegistrationServices;ec: RemObjects.Script.EcmaScript.ExecutionContext;  aFN, aPassword: String);
 
-    [WrapAs('sftp.connect', SkipDryRun := true)]
+    [WrapAs('sftp.connect', SkipDryRun := true, SecretArguments := [2, 3])]
     class method SftpConnect(aServices: IApiRegistrationServices; aServer, aRootpath, aUsername, aPassword: String): Renci.SshNet.SftpClient;
 
     [WrapAs('sftp.close', SkipDryRun := true, wantSelf := true)]
@@ -55,7 +55,7 @@ end;
 
 class method SSHReg.SshExecute(aServices: IApiRegistrationServices; aConnectionString: String; aCMD: String; aUSername: String; aPassword: String): String;
 begin
-  using fs := if String.IsNullOrEmpty(aPassword) then new Renci.SshNet.SshClient(aConnectionString, 22, aUSername, fKeys.ToArray) else 
+  using fs := if String.IsNullOrEmpty(aPassword) then new Renci.SshNet.SshClient(aConnectionString, 22, aUSername, fKeys.ToArray) else
   new Renci.SshNet.SshClient(aConnectionString, 22, aUSername, aPassword) do begin
     fs.Connect;
     using cmd := fs.CreateCommand(aCMD) do begin
@@ -72,10 +72,10 @@ end;
 
 class method SSHReg.SftpConnect(aServices: IApiRegistrationServices; aServer, aRootpath, aUsername, aPassword: String): Renci.SshNet.SftpClient;
 begin
-  result := if String.IsNullOrEmpty(aPassword) then new Renci.SshNet.SftpClient(aServer, 22, aUsername, fKeys.ToArray) else 
+  result := if String.IsNullOrEmpty(aPassword) then new Renci.SshNet.SftpClient(aServer, 22, aUsername, fKeys.ToArray) else
   new Renci.SshNet.SftpClient(aServer, 22, aUsername, aPassword) ;
   result.Connect();
-  if not String.IsNullOrEmpty(aRootpath) then 
+  if not String.IsNullOrEmpty(aRootpath) then
     result.ChangeDirectory(aRootpath);
 end;
 

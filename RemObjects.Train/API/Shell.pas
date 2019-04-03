@@ -1,8 +1,11 @@
 ﻿namespace RemObjects.Train.API;
 
 interface
-uses RemObjects.Train,
+
+uses
+  RemObjects.Train,
   System.Collections.Generic, System.Diagnostics, RemObjects.Script.EcmaScript;
+
 type
   [PluginRegistration]
   ShellRegistration = public class(IPluginRegistration)
@@ -17,15 +20,14 @@ type
     property Killed: Boolean;
   end;
 
-
   Shell = public class
   private
     fEngine: IApiRegistrationServices;
 
   public
-    class method ExecuteProcess(aCommand, aArgs, AWD: String; aComSpec: Boolean; 
-      aTargetError: Action<String>; aTargetOutput: Action<String>; 
-      environment: array of KeyValuePair<String, String>; 
+    class method ExecuteProcess(aCommand, aArgs, AWD: String; aComSpec: Boolean;
+      aTargetError: Action<String>; aTargetOutput: Action<String>;
+      environment: array of KeyValuePair<String, String>;
       aTimeout: nullable TimeSpan;
       aUseProcess: Process := nil): Integer;
     constructor(aItem: IApiRegistrationServices);
@@ -49,7 +51,7 @@ begin
   var lCaptureFunc: EcmaScriptBaseFunctionObject := nil;
   var LWD: String := nil;
   var lAllowedErrorCodes := new Dictionary<String, RemObjects.Script.EcmaScript.PropertyValue>;
-  if lOpt <> nil then 
+  if lOpt <> nil then
   begin
     var lVal := lOpt.Get('capture');
     if (lVal <> nil) and (lVal <> Undefined.Instance) then begin
@@ -59,14 +61,14 @@ begin
       end;
     end;
     lVal := lOpt.Get('allowedErrorCodes');
-    if lVal is EcmaScriptArrayObject then 
+    if lVal is EcmaScriptArrayObject then
     begin
       lAllowedErrorCodes := EcmaScriptArrayObject(lVal).Values;
     end;
     lVal := lOpt.Get('workdir');
     if lVal is String then LWD := fEngine.ResolveWithBase(ec, String(lVal), true);
     lVal := lOpt.Get('timeout');
-    if (lVal <> nil) and (lVal <> Undefined.Instance) then 
+    if (lVal <> nil) and (lVal <> Undefined.Instance) then
       lTimeout := TimeSpan.FromSeconds(Utilities.GetObjAsInteger(lVal, ec));
     lVal := lOpt.Get('environment');
     var lObj := EcmaScriptObject(lVal);
@@ -85,52 +87,59 @@ begin
     end;
     var sb := new System.Text.StringBuilder;
     var lExit := ExecuteProcess(lCMD, lArg, coalesce(LWD, fEngine.Engine.WorkDir),false , a-> begin
-      locking(sb) do begin
-        sb.AppendLine(a);
-      end;
-      if assigned(lCaptureFunc) then begin
-        try
-          lCaptureFunc.Call(ec, a);
-        except
-        end;
-      end;
-    end, a-> begin
-      locking(sb) do sb.AppendLine(a);
-      if assigned(lCaptureFunc) then begin
-        try
-          lCaptureFunc.Call(ec, a);
-        except
-        end;
-      end;
-    end, lEnv.ToArray, lTimeout);
-    if lExit <> 0 then 
-    begin   
+                                                                                                if assigned(a) then begin
+                                                                                                  locking sb do sb.AppendLine(a);
+                                                                                                  if fEngine.Engine.LiveOutput then
+                                                                                                    fEngine.Engine.Logger.LogLive("(stderr) "+a);
+                                                                                                  if assigned(lCaptureFunc) then begin
+                                                                                                    try
+                                                                                                      lCaptureFunc.Call(ec, a);
+                                                                                                    except
+                                                                                                    end;
+                                                                                                  end;
+                                                                                                end;
+                                                                                              end,
+                                                                                          a-> begin
+                                                                                                locking sb do sb.AppendLine(a);
+                                                                                                if assigned(a) then begin
+                                                                                                  if fEngine.Engine.LiveOutput then
+                                                                                                    fEngine.Engine.Logger.LogLive(a);
+                                                                                                  if assigned(lCaptureFunc) then begin
+                                                                                                    try
+                                                                                                      lCaptureFunc.Call(ec, a);
+                                                                                                    except
+                                                                                                    end;
+                                                                                                  end;
+                                                                                                end;
+                                                                                              end, lEnv.ToArray, lTimeout);
+
+    if lExit <> 0 then begin
       var errorOK := false;
-      for each errorCode in lAllowedErrorCodes.Values do
-      begin
-        if errorCode.Value.Equals(lExit) then
-        begin
+      for each errorCode in lAllowedErrorCodes.Values do begin
+        if errorCode.Value.Equals(lExit) then begin
           errorOK := true;
           break;
         end;
       end;
-      if not errorOK then
-      begin
+      if not errorOK then begin
         var lErr := 'Failed with error code: '+lExit;
         fEngine.Engine.Logger.LogError(lErr);
-        fEngine.Engine.Logger.LogMessage('Output: '#13#10+sb.ToString);
+        locking sb do fEngine.Engine.Logger.LogMessage('Output: '#13#10+sb.ToString);
         raise new Exception(lErr);
       end;
     end;
-    fEngine.Engine.Logger.LogInfo('Output: '#13#10+sb.ToString);
+    locking sb do fEngine.Engine.Logger.LogInfo('Output: '#13#10+sb.ToString);
     lFail := false;
-    if lCaptureMode then 
-      exit sb.ToString()
-    else
+    if lCaptureMode then  begin
+      locking sb do exit sb.ToString()
+    end
+    else begin
       exit Undefined.Instance;
+    end;
   except
     on e: Exception do begin
-      fEngine.Engine.Logger.LogError('Error when calling Process.Execute: '+e.Message);
+      fEngine.Engine.Logger.LogError('Error calling Process.Execute: '+e.Message);
+      writeLn(e.ToString());
       raise new AbortException;
     end;
   finally
@@ -149,7 +158,7 @@ begin
   var lWD: String;
   if lOpt <> nil then begin
     var lVal := lOpt.Get('timeout');
-    if (lVal <> nil) and (lVal <> Undefined.Instance) then 
+    if (lVal <> nil) and (lVal <> Undefined.Instance) then
       lTimeout := TimeSpan.FromSeconds(Utilities.GetObjAsInteger(lVal, ec));
     lVal := lOpt.Get('workdir');
     if lVal is String then
@@ -173,13 +182,12 @@ begin
       end;
       var sb := new System.Text.StringBuilder;
       var lExit := ExecuteProcess(lCMD, lArg, coalesce(lWD, fEngine.Engine.WorkDir), false, a-> begin
-        locking(sb) do begin
-          sb.AppendLine(a);
-        end;
-      end, a-> begin
-        locking(sb) do sb.AppendLine(a);
-      end, lEnv.ToArray, lTimeout, lProc);
-      lLogger.LogInfo('Output: '#13#10+sb.ToString);
+                                                                                                  locking sb do sb.AppendLine(a);
+                                                                                                end,
+                                                                                            a-> begin
+                                                                                                  locking sb do sb.AppendLine(a);
+                                                                                                end, lEnv.ToArray, lTimeout, lProc);
+      locking sb do lLogger.LogInfo('Output: '#13#10+sb.ToString);
       if lProc.Killed then exit;
       if 0 <> lExit then begin
         var lErr := 'Failed with error code: '+lExit;
@@ -230,18 +238,18 @@ begin
     end;
     var sb := new System.Text.StringBuilder;
     var lExit := ExecuteProcess(nil, lArg, coalesce(lWD, fEngine.Engine.WorkDir),true , a-> begin
-      locking(sb) do sb.AppendLine(a);
+      locking sb do sb.AppendLine(a);
     end, a-> begin
-      locking(sb) do sb.AppendLine(a)
+      locking sb do sb.AppendLine(a)
     end, nil, nil);
-    fEngine.Engine.Logger.LogInfo('Output: '#13#10+sb.ToString);
+    locking sb do fEngine.Engine.Logger.LogInfo('Output: '#13#10+sb.ToString);
     if 0 <> lExit then begin
       var lErr := 'Failed with error code: '+lExit;
       fEngine.Engine.Logger.LogError(lErr);
       raise new AbortException;
     end;
     lFail := false;
-    exit sb.ToString();
+    locking sb do exit sb.ToString();
   finally
     fEngine.Engine.Logger.Exit(true,'shell.system()', if lFail then RemObjects.Train.FailMode.Yes else RemObjects.Train.FailMode.No);
   end;
@@ -261,7 +269,7 @@ begin
     if String.IsNullOrEmpty(aCommand) then begin
       lProcess.StartInfo.Arguments := (if not MUtilities.Windows then '-c ' else '/C ')+ aArgs;
     end else begin
-      if not aCommand.StartsWith('"') then 
+      if not aCommand.StartsWith('"') then
         aCommand := '"'+aCommand.Replace('"', '""')+'"';
       lProcess.StartInfo.Arguments := (if not MUtilities.Windows then '-c ' else '/C ')+ aCommand+' '+aArgs;
     end;
@@ -290,7 +298,7 @@ begin
     lProcess.StartInfo.EnvironmentVariables[el.Key] := el.Value;
   end;
 
-  try 
+  try
     if not lProcess.Start then raise new Exception('Could not start process');
     if aTargetOutput <> nil then lProcess.BeginOutputReadLine;
     if aTargetError <> nil then lProcess.BeginErrorReadLine;
@@ -299,7 +307,7 @@ begin
         lProcess.WaitForExit()
       else if TimeSpan(aTimeout).TotalSeconds < 0 then
         exit -1
-      else 
+      else
         if not lProcess.WaitForExit(Integer(aTimeout.TotalMilliseconds)) then raise new Exception('Timeout!');
       exit lProcess.ExitCode;
     except
@@ -317,14 +325,14 @@ method ShellRegistration.&Register(aServices: IApiRegistrationServices);
 begin
 
   var lInstance := new Shell(aServices);
-  aServices.RegisterValue('shell', 
+  aServices.RegisterValue('shell',
     new RemObjects.Script.EcmaScript.EcmaScriptObject(aServices.Globals)
-  .AddValue('cd', RemObjects.Train.MUtilities.SimpleFunction(aServices.Engine, (a, b, c) -> 
+  .AddValue('cd', RemObjects.Train.MUtilities.SimpleFunction(aServices.Engine, (a, b, c) ->
     begin
       var lCurrPath := aServices.Engine.WorkDir;
       var lPath := aServices.ResolveWithBase(a, RemObjects.Script.EcmaScript.Utilities.GetArgAsString(c, 0, a), true);
       try
-        if System.IO.Path.IsPathRooted(lPath) then 
+        if System.IO.Path.IsPathRooted(lPath) then
           aServices.Engine.WorkDir := lPath
         else
           aServices.Engine.WorkDir  := System.IO.Path.Combine(aServices.Engine.WorkDir, lPath);
@@ -337,7 +345,7 @@ begin
 
       var lFunc := RemObjects.Script.EcmaScript.Utilities.GetArgAsEcmaScriptObject(c, 1, a);
       if lFunc <> nil then
-      try 
+      try
         lFunc.Call(a);
       finally
         aServices.Engine.WorkDir := lCurrPath;
